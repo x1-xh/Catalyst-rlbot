@@ -1,9 +1,10 @@
-"""RLBotPack-infused 1v1 Soccar training pipeline for Catalyst.
+"""RLBotPack-infused 1v1 Soccar training pipeline for IEEE.
 
 Incorporates proven tournament algorithms from RLBotPack (VirxEB & Necto):
 - VirxEB cubic steerPD curve: cap(((35 * angle)^3) / 10, -1, 1) for zero-twitch straight driving
-- Goal-directed strike approach vector: aims behind the ball facing the opponent goal (0, 5120)
-- VirxEB 3-stage flip routine: Jump (0.075s) -> Release (0.025s) -> Front Dodge (0.3s)
+- Clamped opponent goal strike arc: lines up behind ball facing net [clamp(ball_x*0.35, -700, 700), 5120, 100]
+- Shoot-through-ball targeting when aligned (dot_align > 0.75) for direct goals
+- VirxEB 3-stage powershot flip routine: Jump (0.075s) -> Release (0.025s) -> Front Dodge (0.3s)
 - Realistic ball-car momentum transfer and goal resets
 - Exact 26,181-parameter 13D causal GRU architecture per Model_Wars_Instructions.pdf
 """
@@ -158,26 +159,49 @@ class TrajectoryGenerator:
             )
             speed = math.sqrt(car_vel[0] ** 2 + car_vel[1] ** 2 + car_vel[2] ** 2)
 
-            # VirxEB Goal-Shot Approach Vector:
-            # Vector from ball to opponent goal
+            # VirxEB Goal-Shot Approach Vector & Arc Targeting:
+            # Clamped opponent goal target: inside the net between [-700, 700]
+            goal_x = max(-700.0, min(700.0, ball_pos[0] * 0.35))
+            opponent_goal = [goal_x, 5120.0, 100.0]
+
             bg_x = opponent_goal[0] - ball_pos[0]
             bg_y = opponent_goal[1] - ball_pos[1]
-            bg_dist = math.sqrt(bg_x ** 2 + bg_y ** 2) + 1e-5
+            bg_dist = math.hypot(bg_x, bg_y) + 1e-5
             shot_dir_x = bg_x / bg_dist
             shot_dir_y = bg_y / bg_dist
 
-            # Offset target behind the ball:
-            # When far, guide the car behind the ball; when close (<350), target the ball directly
-            if dist_to_ball > 1800.0:
+            cb_x = ball_pos[0] - car_pos[0]
+            cb_y = ball_pos[1] - car_pos[1]
+            dist_to_ball_2d = math.hypot(cb_x, cb_y) + 1e-5
+            cb_dir_x = cb_x / dist_to_ball_2d
+            cb_dir_y = cb_y / dist_to_ball_2d
+
+            # Alignment: dot product between car-to-ball vector and shot direction
+            # dot_align > 0.75 means car is directly lined up behind the ball to score into opponent goal
+            dot_align = cb_dir_x * shot_dir_x + cb_dir_y * shot_dir_y
+
+            # VirxEB Arc Targeting:
+            if dist_to_ball > 2000.0:
+                # Far from ball: chase ball trajectory prediction
                 target = pred_ball
-            elif dist_to_ball < 350.0:
-                target = [ball_pos[0], ball_pos[1], BALL_RADIUS]
-            else:
-                approach_offset = min(150.0, 70.0 + (dist_to_ball - 350.0) * 0.06)
+            elif dot_align > 0.75:
+                # Well-aligned behind the ball: SHOOT THROUGH THE BALL DIRECTLY INTO THE NET
                 target = [
-                    ball_pos[0] - shot_dir_x * approach_offset,
-                    ball_pos[1] - shot_dir_y * approach_offset,
-                    BALL_RADIUS
+                    ball_pos[0] + shot_dir_x * 90.0,
+                    ball_pos[1] + shot_dir_y * 90.0,
+                    BALL_RADIUS,
+                ]
+            else:
+                # Off-angle: arc behind the ball along the shot line
+                approach_dist = min(280.0, 120.0 + dist_to_ball_2d * 0.12)
+                perp_x = -shot_dir_y
+                perp_y = shot_dir_x
+                side = 1.0 if (cb_x * perp_x + cb_y * perp_y) > 0 else -1.0
+                arc_offset = min(150.0, (1.0 - dot_align) * 160.0)
+                target = [
+                    ball_pos[0] - shot_dir_x * approach_dist + perp_x * side * arc_offset,
+                    ball_pos[1] - shot_dir_y * approach_dist + perp_y * side * arc_offset,
+                    BALL_RADIUS,
                 ]
 
             # Local angle towards target
@@ -201,13 +225,14 @@ class TrajectoryGenerator:
                 else:
                     active_sequence[0] = (mode, remaining)
             elif (
-                # VirxEB Flip Trigger: close to ball, facing ball, ball is low
+                # VirxEB Goal-Strike Flip: close to ball, facing ball, ball is low, AND aligned with goal!
                 dist_to_ball < 320.0
                 and local_x > 0
                 and abs(angle) < 0.28
                 and ball_pos[2] < 200.0
+                and dot_align > 0.65
             ):
-                # VirxEB 3-Stage Timed Flip:
+                # VirxEB 3-Stage Timed Powershot Flip:
                 # 1. Jump (Mode 2) for 0.075s
                 # 2. Release jump (Mode 0) for 0.025s
                 # 3. Dodge (Mode 3) for 0.30s
@@ -224,6 +249,7 @@ class TrajectoryGenerator:
                 and ball_pos[2] > 200.0
                 and local_x > 0
                 and abs(angle) < 0.35
+                and dot_align > 0.30
             ):
                 active_sequence = [
                     (2, 0.22)
@@ -235,6 +261,7 @@ class TrajectoryGenerator:
                 dist_to_ball > 1300.0
                 and speed > 600.0
                 and abs(angle) < 0.10
+                and car_pos[1] < -1500.0
             ):
                 active_sequence = [
                     (2, 0.075),
@@ -321,9 +348,9 @@ class TrajectoryGenerator:
         )
 
 
-def train_policy(epochs=35, lr=1e-3, seed=42, num_train_matches=60, num_val_matches=12):
+def train_policy(epochs=35, lr=1e-3, seed=42, num_train_matches=80, num_val_matches=16):
     print("=" * 60)
-    print("Catalyst 13D GRU Policy: RLBotPack Distillation Training (Expanded)")
+    print("IEEE 13D GRU Policy: RLBotPack Distillation Training (Expanded)")
     print("=" * 60)
 
     torch.manual_seed(seed)
@@ -512,19 +539,19 @@ def train_policy(epochs=35, lr=1e-3, seed=42, num_train_matches=60, num_val_matc
     final_metrics = metrics_history[-1]
     best_metric = min(metrics_history, key=lambda m: m["total_val_loss"])
     provenance = {
-        "dataset_version": "catalyst-rlbotpack-distillation-v4-expanded",
+        "dataset_version": "ieee-rlbotpack-distillation-v5-offensive-arc",
         "split_method": f"whole 1v1 matches ({len(train_data)} train matches / {len(val_data)} val matches, mirrored, {total_train_steps + total_val_steps} timesteps)",
         "seed": seed,
         "architecture": "13D / Linear(13->64) / ReLU / GRU(64->64) / Linear(64->5)",
         "objective": "CrossEntropyLoss(modes) + 1.2 * MSELoss(steering) with CosineAnnealingLR",
         "checkpoint_selection": f"Lowest total validation loss ({best_val_loss:.4f})",
-        "training_command": f"python tools/train.py --epochs {epochs} --lr {lr} --seed {seed} --matches {num_train_matches}",
+        "training_command": f"python tools/train.py --epochs {epochs} --lr {lr} --seed {seed} --matches {num_train_matches} --val-matches {num_val_matches}",
         "validation_results": (
             f"Best Val Mode Accuracy: {best_metric['val_mode_accuracy']}%, "
             f"Best Val Mode Loss: {best_metric['val_mode_loss']}, "
             f"Best Val Steering MSE: {best_metric['val_steer_loss']}"
         ),
-        "limitations": "Policy distilled from RLBotPack tournament algorithms (VirxEB & Necto kinematics).",
+        "limitations": "Policy distilled from RLBotPack tournament algorithms (VirxEB & Necto kinematics) with offensive goal-scoring arc mechanics.",
     }
 
     provenance_path = ROOT / "docs" / "training_provenance.json"
@@ -535,12 +562,12 @@ def train_policy(epochs=35, lr=1e-3, seed=42, num_train_matches=60, num_val_matc
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Train Catalyst GRU Policy with RLBotPack Distillation")
+    parser = argparse.ArgumentParser(description="Train IEEE GRU Policy with RLBotPack Distillation")
     parser.add_argument("--epochs", type=int, default=35, help="Number of training epochs")
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
-    parser.add_argument("--matches", type=int, default=60, help="Number of raw training matches (doubled by symmetry)")
-    parser.add_argument("--val-matches", type=int, default=12, help="Number of raw validation matches")
+    parser.add_argument("--matches", type=int, default=80, help="Number of raw training matches (doubled by symmetry)")
+    parser.add_argument("--val-matches", type=int, default=16, help="Number of raw validation matches")
     args = parser.parse_args()
     checkpoint_path, provenance_path, metrics = train_policy(
         epochs=args.epochs,

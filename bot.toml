@@ -1,7 +1,7 @@
 #:schema https://rlbot.org/schemas/agent.json
 [settings]
-name = "Catalyst"
-agent_id = "Catalyst/IEEE"
+name = "IEEE"
+agent_id = "IEEE/IEEE"
 root_dir = ""
 run_command = ".venv\\Scripts\\python.exe -I -u -B src\\bot.py"
 loadout_file = "loadout.toml"
@@ -9,7 +9,7 @@ logo_file = ""
 hivemind = false
 
 [details]
-description = "Trained 1v1 imitation-learning GRU policy by Catalyst/IEEE."
+description = "Trained 1v1 imitation-learning GRU policy by IEEE."
 developer = "IEEE"
 language = "Python"
 tags = ["1v1"]
