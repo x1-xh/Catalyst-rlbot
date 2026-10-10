@@ -77,7 +77,6 @@ class TrajectoryGenerator:
         prev_steer = 0.0
 
         active_sequence = []
-        kickoff_timer = 0.1
         t = 0.0
         opponent_goal = [0.0, 5120.0, 100.0]
 
@@ -101,7 +100,6 @@ class TrajectoryGenerator:
                     # Goal scored! Reset kickoff
                     car_pos, car_vel, car_yaw, ball_pos, ball_vel = reset_kickoff()
                     active_sequence.clear()
-                    kickoff_timer = 0.1
                 else:
                     ball_pos[1] = math.copysign(ARENA_EXTENT_Y - BALL_RADIUS, ball_pos[1])
                     ball_vel[1] = -ball_vel[1] * RESTITUTION
@@ -169,18 +167,18 @@ class TrajectoryGenerator:
             shot_dir_y = bg_y / bg_dist
 
             # Offset target behind the ball:
-            # When far, guide the car behind the ball; when close, target contact point
-            approach_offset = min(220.0, 95.0 + dist_to_ball * 0.12)
-            strike_target = [
-                ball_pos[0] - shot_dir_x * approach_offset,
-                ball_pos[1] - shot_dir_y * approach_offset,
-                BALL_RADIUS
-            ]
-
+            # When far, guide the car behind the ball; when close (<350), target the ball directly
             if dist_to_ball > 1800.0:
                 target = pred_ball
+            elif dist_to_ball < 350.0:
+                target = [ball_pos[0], ball_pos[1], BALL_RADIUS]
             else:
-                target = strike_target
+                approach_offset = min(150.0, 70.0 + (dist_to_ball - 350.0) * 0.06)
+                target = [
+                    ball_pos[0] - shot_dir_x * approach_offset,
+                    ball_pos[1] - shot_dir_y * approach_offset,
+                    BALL_RADIUS
+                ]
 
             # Local angle towards target
             dx = target[0] - car_pos[0]
@@ -193,11 +191,7 @@ class TrajectoryGenerator:
             steer = steer_pd(angle)
 
             # Action mode decision
-            if kickoff_timer > 0.0:
-                mode = 0
-                steer = 0.0
-                kickoff_timer -= dt
-            elif len(active_sequence) > 0:
+            if len(active_sequence) > 0:
                 # Continuing active sequence (Jump, Release, or Flip)
                 mode, remaining = active_sequence[0]
                 steer = 0.0
@@ -343,13 +337,29 @@ def train_policy(epochs=25, lr=1e-3, seed=42):
     num_val_matches = 6
     match_steps = 1600
 
-    train_data = [generator.generate_match(num_steps=match_steps) for _ in range(num_train_matches)]
-    val_data = [generator.generate_match(num_steps=match_steps) for _ in range(num_val_matches)]
+    def mirror_match(obs, modes, steers):
+        obs_m = np.copy(obs)
+        obs_m[:, 1] = -obs_m[:, 1]  # ball_right
+        obs_m[:, 4] = -obs_m[:, 4]  # prediction_right
+        steers_m = -np.copy(steers)
+        return obs_m, np.copy(modes), steers_m
 
-    total_train_steps = num_train_matches * match_steps
-    total_val_steps = num_val_matches * match_steps
-    print(f"    - Train matches: {num_train_matches} ({total_train_steps} timesteps)")
-    print(f"    - Val matches:   {num_val_matches} ({total_val_steps} timesteps)")
+    train_data = []
+    for _ in range(num_train_matches):
+        obs, modes, steers = generator.generate_match(num_steps=match_steps)
+        train_data.append((obs, modes, steers))
+        train_data.append(mirror_match(obs, modes, steers))
+
+    val_data = []
+    for _ in range(num_val_matches):
+        obs, modes, steers = generator.generate_match(num_steps=match_steps)
+        val_data.append((obs, modes, steers))
+        val_data.append(mirror_match(obs, modes, steers))
+
+    total_train_steps = len(train_data) * match_steps
+    total_val_steps = len(val_data) * match_steps
+    print(f"    - Train matches: {len(train_data)} ({total_train_steps} timesteps, symmetric mirrored)")
+    print(f"    - Val matches:   {len(val_data)} ({total_val_steps} timesteps, symmetric mirrored)")
 
     device = torch.device("cpu")
     model = Policy().to(device)
@@ -463,6 +473,38 @@ def train_policy(epochs=25, lr=1e-3, seed=42):
     checkpoint_path = ROOT / "model" / "catalyst_policy.pt"
     torch.save({"state_dict": best_state_dict}, checkpoint_path)
     print(f"\n[✓] Saved best checkpoint to: {checkpoint_path}")
+
+    # Live game sanity verification using contract-built game states
+    eval_model = Policy().eval()
+    eval_model.load_state_dict(best_state_dict)
+    test_basis = basis([0, math.pi / 2, 0])
+    with torch.no_grad():
+        # Kickoff
+        raw_k = {"position": [0, -4608, 17], "velocity": [0, 0, 0], "basis": test_basis, "ball_present": True, "ball_position": [0, 0, 93]}
+        ctx_k = {"elapsed": 0.0, "previous_elapsed": None, "previous_mode": 0, "previous_steer": 0.0, "prediction_valid": True, "prediction_position": [0, 0, 93], "selected_time": 2.0, "first_time": 1 / 120}
+        obs_k = list(build(raw_k, ctx_k)[:13])
+        logits_k, steer_k, _ = eval_model(torch.tensor([obs_k], dtype=torch.float32))
+        mode_k = logits_k.argmax(1).item()
+        print(f"[*] Kickoff Sanity Check: Predicted Mode = {mode_k} (Steer: {steer_k.item():.4f})")
+        assert mode_k == 1, f"Model failed kickoff check! Predicted Mode {mode_k} instead of Chase (1)"
+        assert abs(steer_k.item()) < 0.15, f"Kickoff steer is biased ({steer_k.item():.4f})! Must be ~0.0"
+
+        # Ball to Right
+        raw_r = {"position": [0, -2000, 17], "velocity": [0, 800, 0], "basis": test_basis, "ball_present": True, "ball_position": [-500, -1500, 93]}
+        ctx_r = {"elapsed": 1.0, "previous_elapsed": 0.983, "previous_mode": 1, "previous_steer": 0.0, "prediction_valid": True, "prediction_position": [-500, -1500, 93], "selected_time": 3.0, "first_time": 1.0 + 1 / 120}
+        obs_r = list(build(raw_r, ctx_r)[:13])
+        logits_r, steer_r, _ = eval_model(torch.tensor([obs_r], dtype=torch.float32))
+        print(f"[*] Ball Right Sanity Check (obs[1]={obs_r[1]:.4f}): Steer = {steer_r.item():.4f}")
+        assert steer_r.item() > 0.05, f"Model failed right steer check! Output: {steer_r.item():.4f}"
+
+        # Ball to Left
+        raw_l = {"position": [0, -2000, 17], "velocity": [0, 800, 0], "basis": test_basis, "ball_present": True, "ball_position": [500, -1500, 93]}
+        ctx_l = {"elapsed": 1.0, "previous_elapsed": 0.983, "previous_mode": 1, "previous_steer": 0.0, "prediction_valid": True, "prediction_position": [500, -1500, 93], "selected_time": 3.0, "first_time": 1.0 + 1 / 120}
+        obs_l = list(build(raw_l, ctx_l)[:13])
+        logits_l, steer_l, _ = eval_model(torch.tensor([obs_l], dtype=torch.float32))
+        print(f"[*] Ball Left Sanity Check (obs[1]={obs_l[1]:.4f}): Steer = {steer_l.item():.4f}")
+        assert steer_l.item() < -0.05, f"Model failed left steer check! Output: {steer_l.item():.4f}"
+    print("[✓] All live game sanity checks PASSED!")
 
     final_metrics = metrics_history[-1]
     provenance = {

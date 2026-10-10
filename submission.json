@@ -10,11 +10,11 @@
     "seed": 42,
     "architecture": "13D / Linear(13->64) / ReLU / GRU(64->64) / Linear(64->5)",
     "objective": "CrossEntropyLoss(modes) + 1.0 * MSELoss(steering)",
-    "checkpoint_selection": "Lowest total validation loss (0.1934)",
+    "checkpoint_selection": "Lowest total validation loss (0.0921)",
     "training_command": "python tools/train.py --epochs 25 --lr 0.001 --seed 42",
-    "validation_results": "Val Mode Accuracy: 92.35%, Val Mode Loss: 0.2005, Val Steering MSE: 0.0343",
+    "validation_results": "Val Mode Accuracy: 97.1%, Val Mode Loss: 0.0758, Val Steering MSE: 0.0262",
     "limitations": "Policy distilled from RLBotPack tournament algorithms (VirxEB & Necto kinematics)."
   },
   "live_acceptance": "NOT TESTED after edits; run preflight and GUI match",
-  "checkpoint_sha256": "6b91b2b5d9e34ecd721820f229a8748b33e109dbe71db59fd027729649607722"
+  "checkpoint_sha256": "6251f60615427e2499a0515ebb0889b343bb1a44590c2c87e4b260758cf8f9da"
 }
