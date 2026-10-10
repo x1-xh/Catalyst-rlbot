@@ -388,4 +388,10 @@ def train_policy(epochs=25, lr=1e-3, seed=42):
 
 
 if __name__ == "__main__":
-    checkpoint_path, provenance_path, metrics = train_policy(epochs=20, lr=1.5e-3, seed=42)
+    import argparse
+    parser = argparse.ArgumentParser(description="Train Catalyst GRU Policy")
+    parser.add_argument("--epochs", type=int, default=20, help="Number of training epochs")
+    parser.add_argument("--lr", type=float, default=1.5e-3, help="Learning rate")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    args = parser.parse_args()
+    checkpoint_path, provenance_path, metrics = train_policy(epochs=args.epochs, lr=args.lr, seed=args.seed)

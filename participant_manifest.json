@@ -50,7 +50,7 @@
     "src/runtime.py": "595bc6704fa02a702e8f1951f918490855ded3ddcf24ab9e95ef0fcafba9d601",
     "submission.json": "66205d5c64a0b02d21add114b214985197491d25114af8d23e604e793766d0d4",
     "tools/kit.py": "3fa865bb48ec887cb397eb2ac4689054f79a4fb163b5b01077d7d2201124c622",
-    "tools/train.py": "83fe57cf4cab58c1e0db9595a58742fb18349bd4f6cda5defc16fc1509f76ae5",
+    "tools/train.py": "d4b4c6a30d9f71621f00337cd2d9a8438579a81fea85a80f71d397f6be86bb97",
     "tools/validate_submission.py": "afe4ebfd1d79c42e2a81833812ccf1cbb68141bf90d977819e7f1b6b65646e38"
   }
 }
