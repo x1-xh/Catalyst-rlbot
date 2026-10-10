@@ -5,16 +5,16 @@
   "baseline_checkpoint_sha256": "579fa26010140514d2e9b7f0e2871bee569c594b7da8648e31ee1489007cd5b7",
   "checkpoint_source": "Participant checkpoint",
   "training_provenance": {
-    "dataset_version": "catalyst-synthetic-soccar-v1",
-    "split_method": "whole 1v1 matches (25 train matches / 5 val matches, 80/20 split)",
-    "seed": 1337,
+    "dataset_version": "catalyst-strike-anti-circling-v2",
+    "split_method": "whole 1v1 matches (28 train matches / 6 val matches, 82/18 split)",
+    "seed": 2026,
     "architecture": "13D / Linear(13->64) / ReLU / GRU(64->64) / Linear(64->5)",
-    "objective": "CrossEntropyLoss(modes) + 0.5 * MSELoss(steering)",
-    "checkpoint_selection": "Lowest total validation loss (0.0398)",
-    "training_command": "python tools/train.py --epochs 25 --lr 0.0015 --seed 1337",
-    "validation_results": "Val Mode Accuracy: 98.63%, Val Mode Loss: 0.0394, Val Steering MSE: 0.0283",
-    "limitations": "Model trained on kinematic imitation; wall-air aerial touches remain heuristic."
+    "objective": "WeightedCrossEntropyLoss(modes: [1,1,3.5,3.5]) + 0.5 * MSELoss(steering)",
+    "checkpoint_selection": "Lowest total validation loss (0.0445)",
+    "training_command": "python tools/train.py --epochs 25 --lr 0.0015 --seed 2026",
+    "validation_results": "Val Mode Accuracy: 96.94%, Val Mode Loss: 0.085, Val Steering MSE: 0.0095",
+    "limitations": "Model trained on goal-directed strike imitation and multi-stage flip sequences."
   },
   "live_acceptance": "NOT TESTED after edits; run preflight and GUI match",
-  "checkpoint_sha256": "21878b0325bec643552f62e555c35f2cac8cf6cc366182776d804f92411fc8cb"
+  "checkpoint_sha256": "d46eee89a797222d904b9a167d3767f2808b6aa85a4d324d76aac3cc58e7e836"
 }

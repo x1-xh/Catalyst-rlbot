@@ -5,7 +5,7 @@
 - **Agent Identifier:** `Catalyst/IEEE`
 - **Architecture:** 13D Causal GRU (`Linear(13 -> 64) -> ReLU -> GRU(64 -> 64) -> Linear(64 -> 5)`)
 - **Trainable Parameters:** Exactly 26,181 parameters
-- **Trained Checkpoint SHA-256:** `21878b0325bec643552f62e555c35f2cac8cf6cc366182776d804f92411fc8cb`
+- **Trained Checkpoint SHA-256:** `d46eee89a797222d904b9a167d3767f2808b6aa85a4d324d76aac3cc58e7e836`
 - **Baseline Checkpoint SHA-256:** `579fa26010140514d2e9b7f0e2871bee569c594b7da8648e31ee1489007cd5b7`
 
 ---
@@ -13,16 +13,20 @@
 ## 2. Training Methodology & Provenance
 
 ### 2.1 Dataset & Simulation Environment
-The policy was trained using behavioral cloning (imitation learning) on simulated Rocket League 1v1 Soccar matches:
-- **Dataset Version:** `catalyst-synthetic-soccar-v1`
-- **Splits:** 25 training matches (37,500 timesteps) and 5 validation matches (7,500 timesteps) partitioned by whole continuous matches (80/20 train/validation split).
+The policy was trained using behavioral cloning (imitation learning) on simulated Rocket League 1v1 Soccar matches with full car-ball collisions:
+- **Dataset Version:** `catalyst-strike-anti-circling-v2`
+- **Splits:** 28 training matches (44,800 timesteps) and 6 validation matches (9,600 timesteps) partitioned by whole continuous matches (82/18 train/validation split).
 - **Observation Space:** 13 normalized dimensions constructed via `src/observation_contract.py` (car-relative ball displacement, 2-second trajectory prediction slices, distances, speeds, and callback timing).
-- **Teacher Strategy:** An expert kinematic teacher incorporating ball-prediction lead targeting for distances > 1500 UU, continuous proportional steering towards the target (`steer = clamp(angle * 5, -1, 1)`), aerial single jumps for balls above 180 UU, and front-flip strikes for close-range balls at speed > 700 UU/s.
-- **Random Seed:** 1337
+- **Strike & Anti-Circling Dynamics:** 
+  - Aiming targets a contact offset behind the ball oriented directly towards the opponent's goal `(0, 5120)`.
+  - Close-range approach steering uses smooth proportional gain to prevent the car from orbiting or circling the ball.
+  - Front-flip strikes are generated via the proper 3-stage sequence: `Mode 2 (Jump)` for 0.05s $\to$ `Mode 0 (Neutral release)` for 0.033s $\to$ `Mode 3 (Front Dodge)` for 0.18s.
+  - Car-ball collisions transfer linear momentum into the ball towards the shot direction, resetting to kickoff upon goal conversion.
+- **Random Seed:** 2026
 
 ### 2.2 Optimization & Loss Objectives
-- **Objective Function:** Composite loss:
-  $$\mathcal{L}_{\text{total}} = \mathcal{L}_{\text{CrossEntropy}}(\text{mode logits}, \text{target mode}) + 0.5 \times \mathcal{L}_{\text{MSE}}(\text{steer}, \text{target steer})_{\text{mode=Chase}}$$
+- **Objective Function:** Weighted composite loss:
+  $$\mathcal{L}_{\text{total}} = \mathcal{L}_{\text{CrossEntropy}}(\text{mode logits}, \text{target mode}, w=[1.0, 1.0, 3.5, 3.5]) + 0.5 \times \mathcal{L}_{\text{MSE}}(\text{steer}, \text{target steer})_{\text{mode=Chase}}$$
 - **Optimizer:** AdamW (`lr = 1.5e-3`, `weight_decay = 1e-4`) with gradient clipping at `max_norm = 1.0`.
 - **Recurrent State:** Processed in sequence chunks of length 64 with truncated backpropagation through time over 25 epochs. Recurrent hidden state $h \in \mathbb{R}^{1 \times 1 \times 64}$ was preserved across chunks within matches and detached at chunk boundaries, only being reset at whole-match boundaries.
 
@@ -32,25 +36,25 @@ The policy was trained using behavioral cloning (imitation learning) on simulate
 
 | Epoch | Train Mode Loss | Train Steer MSE | Val Mode Loss | Val Steer MSE | Val Mode Accuracy | Notes |
 |:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| 1 | 0.3490 | 0.6231 | 0.1550 | 0.6849 | 94.1% | Initial convergence |
-| 5 | 0.0407 | 0.0345 | 0.0733 | 0.0567 | 96.8% | Steering stabilized |
-| 10 | 0.0269 | 0.0235 | 0.0393 | 0.0928 | 98.7% | Mode distinction sharp |
-| 13 | 0.0248 | 0.0194 | 0.0299 | 0.0198 | **98.9%** | **Best Checkpoint** |
-| 20 | 0.0195 | 0.0176 | 0.0653 | 0.0291 | 97.8% | Fine-tuning flips |
-| 25 | 0.0175 | 0.0165 | 0.0394 | 0.0283 | 98.6% | Training complete |
+| 1 | 1.1110 | 0.2283 | 1.2602 | 0.1742 | 54.4% | Weighted mode warmup |
+| 5 | 0.4632 | 0.0471 | 0.3956 | 0.0359 | 82.6% | Strike triggers learned |
+| 10 | 0.2330 | 0.0178 | 0.1590 | 0.0155 | 92.4% | Anti-circling alignment |
+| 15 | 0.1372 | 0.0127 | 0.0546 | 0.0164 | 96.7% | Flip timing sharpened |
+| 21 | 0.1086 | 0.0087 | 0.0415 | 0.0060 | **97.8%** | **Best Checkpoint** |
+| 25 | 0.0900 | 0.0095 | 0.0850 | 0.0095 | 96.9% | Convergence reached |
 
 ### Final Measured Validation Performance
-- **Mode Classification Accuracy:** **98.9%** (Best Checkpoint)
-- **Validation Mode Loss:** **0.0299**
-- **Validation Steering MSE:** **0.0198**
-- **Lowest Total Validation Loss:** **0.0398**
+- **Mode Classification Accuracy:** **97.8%** (Best Checkpoint)
+- **Validation Mode Loss:** **0.0415**
+- **Validation Steering MSE:** **0.0060**
+- **Lowest Total Validation Loss:** **0.0445**
 
 ---
 
 ## 4. Local Preflight & GUI Verification
 1. **Mathematical & Tensor Invariance:** Verified offline that all 26,181 parameter tensors are strictly finite (no `NaN` or `Inf`). Forward pass produces shape `(1, 4)` for mode logits, `(1,)` for continuous steering, and `(1, 1, 64)` for hidden state.
-2. **Cryptographic Sealing:** Sealed via `python tools/kit.py seal`, updating `src/runtime.py` with runtime PIN `21878b0325bec643552f62e555c35f2cac8cf6cc366182776d804f92411fc8cb`.
-3. **GUI Acceptance Plan (Windows):** Launching via RLBot v5 launcher (`bot.toml`), placing Catalyst in a 1v1 match on standard DFH Stadium against baseline opponents to observe ball tracking, kickoff transitions, and front-flip striking.
+2. **Cryptographic Sealing:** Sealed via `python tools/kit.py seal`, updating `src/runtime.py` with runtime PIN `d46eee89a797222d904b9a167d3767f2808b6aa85a4d324d76aac3cc58e7e836`.
+3. **GUI Acceptance Plan (Windows):** Launching via RLBot v5 launcher (`bot.toml`), placing Catalyst in a 1v1 match on standard DFH Stadium against baseline opponents to verify direct ball strikes and elimination of circular orbiting.
 
 ---
 
