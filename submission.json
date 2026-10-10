@@ -5,16 +5,16 @@
   "baseline_checkpoint_sha256": "579fa26010140514d2e9b7f0e2871bee569c594b7da8648e31ee1489007cd5b7",
   "checkpoint_source": "Participant checkpoint",
   "training_provenance": {
-    "dataset_version": "ieee-championship-v7",
-    "split_method": "whole 1v1 matches (400 train matches / 80 val matches, mirrored, 768000 timesteps)",
+    "dataset_version": "ieee-championship-v8",
+    "split_method": "whole 1v1 matches (500 train matches / 100 val matches, mirrored, 960,000 timesteps)",
     "seed": 42,
     "architecture": "13D / Linear(13->64) / ReLU / GRU(64->64) / Linear(64->5)",
-    "objective": "CrossEntropyLoss(modes) + 1.2 * MSELoss(steering) with CosineAnnealingLR",
-    "checkpoint_selection": "Lowest total validation loss (0.0190)",
-    "training_command": "python tools/train.py --epochs 35 --lr 0.001 --seed 42 --matches 200 --val-matches 40",
-    "validation_results": "Best Val Mode Accuracy: 99.95%, Best Val Mode Loss: 0.0017, Best Val Steering MSE: 0.0144",
-    "limitations": "Autonomous causal GRU policy trained with offensive goal-scoring arc, shadow defense recovery, and powershot mechanics."
+    "objective": "ClassWeightedCrossEntropy(modes) + 1.2 * MSELoss(steering) + 0.3 * CenteringLoss + CosineAnnealingLR",
+    "checkpoint_selection": "Lowest total validation loss (0.0754)",
+    "training_command": "python tools/train.py --epochs 30 --lr 0.0015 --seed 42 --matches 250 --val-matches 50",
+    "validation_results": "Best Val Mode Accuracy: 98.7%, Best Val Mode Loss: 0.0600, Best Val Steering MSE: 0.0128",
+    "limitations": "Autonomous causal GRU policy trained with high-volume 1v1 tactical scenarios, dynamic lead pursuit, lethal powershot flips, and exact left-right symmetry."
   },
   "live_acceptance": "NOT TESTED after edits; run preflight and GUI match",
-  "checkpoint_sha256": "08d4741f25e9a85330ece0a178881dcb7dd12739d9bfd3f85f051744add784aa"
+  "checkpoint_sha256": "f1cad370683ceceaf09d95f19103f007887973c02a707d4ef9b09b5c1de3fb13"
 }
