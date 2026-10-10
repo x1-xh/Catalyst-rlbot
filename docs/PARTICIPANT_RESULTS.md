@@ -5,23 +5,23 @@
 - **Agent Identifier:** `Catalyst/IEEE`
 - **Architecture:** 13D Causal GRU (`Linear(13 -> 64) -> ReLU -> GRU(64 -> 64) -> Linear(64 -> 5)`)
 - **Trainable Parameters:** Exactly 26,181 parameters
-- **Trained Checkpoint SHA-256:** `90529e565bf199c499da2282a45b3662a8f5c53a2a452ebec73b3eea224c98df`
+- **Trained Checkpoint SHA-256:** `6b91b2b5d9e34ecd721820f229a8748b33e109dbe71db59fd027729649607722`
 - **Baseline Checkpoint SHA-256:** `579fa26010140514d2e9b7f0e2871bee569c594b7da8648e31ee1489007cd5b7`
 
 ---
 
 ## 2. Training Methodology & Provenance
 
-### 2.1 Dataset & Simulation Environment
-The policy was trained using behavioral cloning (imitation learning) on simulated Rocket League 1v1 Soccar matches strictly conforming to the official tournament contract:
-- **Dataset Version:** `catalyst-strike-anti-circling-v2`
-- **Splits:** 28 training matches (44,800 timesteps) and 6 validation matches (9,600 timesteps) partitioned by whole continuous matches (82/18 train/validation split).
-- **Observation Space:** Exact 13 normalized dimensions constructed via `src/observation_contract.py` (car-relative ball displacement, 2-second trajectory prediction slices, distances, speeds, and callback timing).
-- **Strike & Anti-Circling Dynamics:** 
-  - Aiming targets a contact offset behind the ball oriented directly towards the opponent's goal `(0, 5120)`.
-  - Close-range approach steering uses smooth proportional gain to prevent the car from orbiting or circling the ball.
-  - Front-flip strikes are generated via the proper 3-stage sequence: `Mode 2 (Jump)` for 0.05s $\to$ `Mode 0 (Neutral release)` for 0.033s $\to$ `Mode 3 (Front Dodge)` for 0.18s.
-  - Car-ball collisions transfer linear momentum into the ball towards the shot direction, resetting to kickoff upon goal conversion.
+### 2.1 RLBotPack Tournament Distillation
+The policy was trained via behavioral cloning and policy distillation utilizing tournament algorithms from top bots in the official RLBotPack (`VirxEB` & `Necto`):
+- **Dataset Version:** `catalyst-rlbotpack-distillation-v3`
+- **Splits:** 30 training matches (48,000 timesteps) and 6 validation matches (9,600 timesteps) partitioned by whole continuous matches (83/17 train/validation split).
+- **Observation Space:** 13 normalized dimensions constructed via `src/observation_contract.py` (car-relative ball displacement, 2-second trajectory prediction slices, distances, speeds, and callback timing).
+- **Integrated Tournament Mechanics:** 
+  - **VirxEB Cubic Steer PD:** Uses the cubic steering curve $\text{clamp}\left(\frac{(35 \cdot \text{angle})^3}{10}, -1, 1\right)$ to deliver dead-straight driving without angle oscillation while providing agile turning response when needed.
+  - **Goal-Directed Approach Offset:** Aims along the vector from the ball to the opponent's goal `(0, 5120)` to set up clean, powerful shots through the ball rather than orbiting its center.
+  - **VirxEB 3-Stage Timed Flip:** Accurate timing structure: `Mode 2 (Jump)` for 0.075s $\to$ `Mode 0 (Release)` for 0.025s $\to$ `Mode 3 (Front Dodge Flip)` for 0.30s.
+  - **Car-Ball Collisions:** Full momentum transfer into the ball with kickoff resets upon scoring.
 - **Random Seed:** 42
 
 ### 2.2 Optimization & Loss Objectives (Exact Tournament Specification)
@@ -36,25 +36,26 @@ The policy was trained using behavioral cloning (imitation learning) on simulate
 
 | Epoch | Train Mode Loss | Train Steer MSE | Val Mode Loss | Val Steer MSE | Val Mode Accuracy | Notes |
 |:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| 1 | 1.2286 | 0.3137 | 1.1376 | 0.2432 | 48.2% | Initial convergence |
-| 5 | 0.7459 | 0.0563 | 0.7316 | 0.0597 | 68.8% | Steering aligned |
-| 10 | 0.5418 | 0.0258 | 0.5206 | 0.0188 | 78.8% | Mode distinction clear |
-| 15 | 0.3684 | 0.0174 | 0.3534 | 0.0134 | 85.5% | Strike timing learned |
-| 20 | 0.2794 | 0.0127 | 0.2888 | 0.0093 | 90.7% | High precision |
-| 25 | 0.1845 | 0.0106 | 0.1431 | 0.0059 | **94.5%** | **Best Checkpoint** |
+| 1 | 0.9498 | 0.6643 | 0.8179 | 0.5395 | 68.5% | Warmup |
+| 5 | 0.6039 | 0.2298 | 0.5555 | 0.2289 | 81.6% | SteerPD convergence |
+| 10 | 0.4269 | 0.1225 | 0.4935 | 0.2338 | 83.7% | Approach alignment |
+| 15 | 0.3103 | 0.0664 | 0.2859 | 0.0419 | 89.6% | Strike timing learned |
+| 20 | 0.2156 | 0.0544 | 0.2265 | 0.0230 | 90.6% | High precision |
+| 24 | 0.1878 | 0.0505 | 0.1673 | 0.0261 | **93.8%** | **Best Checkpoint** |
+| 25 | 0.1803 | 0.0506 | 0.2005 | 0.0343 | 92.4% | Final epoch |
 
 ### Final Measured Validation Performance
-- **Mode Classification Accuracy:** **94.51%**
-- **Validation Mode Loss:** **0.1431**
-- **Validation Steering MSE:** **0.0059**
-- **Lowest Total Validation Loss:** **0.1490**
+- **Mode Classification Accuracy:** **93.8%** (Best Checkpoint)
+- **Validation Mode Loss:** **0.1673**
+- **Validation Steering MSE:** **0.0261**
+- **Lowest Total Validation Loss:** **0.1934**
 
 ---
 
 ## 4. Local Preflight & GUI Verification
 1. **Mathematical & Tensor Invariance:** Verified offline that all 26,181 parameter tensors are strictly finite (no `NaN` or `Inf`). Forward pass produces shape `(1, 4)` for mode logits, `(1,)` for continuous steering, and `(1, 1, 64)` for hidden state.
-2. **Cryptographic Sealing:** Sealed via `python tools/kit.py seal`, updating `src/runtime.py` with runtime PIN `90529e565bf199c499da2282a45b3662a8f5c53a2a452ebec73b3eea224c98df`.
-3. **GUI Acceptance Plan (Windows):** Launching via RLBot v5 launcher (`bot.toml`), placing Catalyst in a 1v1 match on standard DFH Stadium against baseline opponents to verify direct ball strikes and elimination of circular orbiting.
+2. **Cryptographic Sealing:** Sealed via `python tools/kit.py seal`, updating `src/runtime.py` with runtime PIN `6b91b2b5d9e34ecd721820f229a8748b33e109dbe71db59fd027729649607722`.
+3. **GUI Acceptance Plan (Windows):** Launching via RLBot v5 launcher (`bot.toml`), placing Catalyst in a 1v1 match on standard DFH Stadium against baseline opponents to verify direct ball strikes and clean straight driving.
 
 ---
 

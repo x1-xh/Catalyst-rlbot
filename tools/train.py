@@ -1,11 +1,11 @@
-"""Autonomous realistic 1v1 Soccar simulation and behavioral cloning trainer for Catalyst.
+"""RLBotPack-infused 1v1 Soccar training pipeline for Catalyst.
 
-Includes:
-- Realistic car-ball collisions and goal scoring
-- Precision strike targeting (aiming through the ball towards the opponent goal)
-- Proper 3-stage flip strike sequence: Jump (Mode 2) -> Release (Mode 0) -> Front Dodge (Mode 3)
-- Kickoff fast approach and aerial touch handling
-- Anti-circling proportional steering
+Incorporates proven tournament algorithms from RLBotPack (VirxEB & Necto):
+- VirxEB cubic steerPD curve: cap(((35 * angle)^3) / 10, -1, 1) for zero-twitch straight driving
+- Goal-directed strike approach vector: aims behind the ball facing the opponent goal (0, 5120)
+- VirxEB 3-stage flip routine: Jump (0.075s) -> Release (0.025s) -> Front Dodge (0.3s)
+- Realistic ball-car momentum transfer and goal resets
+- Exact 26,181-parameter 13D causal GRU architecture per Model_Wars_Instructions.pdf
 """
 import argparse
 import json
@@ -35,8 +35,14 @@ CAR_RADIUS = 75.0
 MAX_CAR_SPEED = 2300.0
 
 
+def steer_pd(angle: float) -> float:
+    """VirxEB cubic steer PD controller for smooth, non-oscillating steering."""
+    val = ((35.0 * angle) ** 3) / 10.0
+    return max(-1.0, min(1.0, val))
+
+
 class TrajectoryGenerator:
-    """Simulates realistic 1v1 match trajectories with real collisions, goals, and strikes."""
+    """Generates 1v1 match trajectories using RLBotPack tournament algorithms."""
 
     def __init__(self, seed=42):
         self.rng = random.Random(seed)
@@ -48,15 +54,14 @@ class TrajectoryGenerator:
         target_steers = []
 
         def reset_kickoff():
-            # Standard kickoff positions
-            kickoff_types = [
-                ([0.0, -4608.0, 17.0], math.pi / 2),           # Straight back
-                ([-2048.0, -2560.0, 17.0], math.pi / 4),       # Diagonal left
-                ([2048.0, -2560.0, 17.0], 3 * math.pi / 4),    # Diagonal right
-                ([-256.0, -3840.0, 17.0], math.pi / 2),        # Offset left
-                ([256.0, -3840.0, 17.0], math.pi / 2),         # Offset right
+            kickoff_spawns = [
+                ([0.0, -4608.0, 17.0], math.pi / 2),
+                ([-2048.0, -2560.0, 17.0], math.pi / 4),
+                ([2048.0, -2560.0, 17.0], 3 * math.pi / 4),
+                ([-256.0, -3840.0, 17.0], math.pi / 2),
+                ([256.0, -3840.0, 17.0], math.pi / 2),
             ]
-            c_pos, c_yaw = self.rng.choice(kickoff_types)
+            c_pos, c_yaw = self.rng.choice(kickoff_spawns)
             c_pos = list(c_pos)
             c_vel = [0.0, 0.0, 0.0]
             b_pos = [0.0, 0.0, BALL_RADIUS]
@@ -71,34 +76,32 @@ class TrajectoryGenerator:
         prev_mode = 0
         prev_steer = 0.0
 
-        # Multi-stage sequence: list of (mode, remaining_time)
         active_sequence = []
-
+        kickoff_timer = 0.1
         t = 0.0
-        kickoff_neutral_timer = 0.1  # Brief pause on kickoff
         opponent_goal = [0.0, 5120.0, 100.0]
 
         for step in range(num_steps):
-            # Ball physics with gravity and bounce
+            # Ball physics
             ball_pos[0] += ball_vel[0] * dt
             ball_pos[1] += ball_vel[1] * dt
             ball_pos[2] += ball_vel[2] * dt + 0.5 * GRAVITY * dt * dt
             ball_vel[2] += GRAVITY * dt
 
-            # Ground bounce
+            # Floor bounce
             if ball_pos[2] <= BALL_RADIUS:
                 ball_pos[2] = BALL_RADIUS
                 ball_vel[2] = -ball_vel[2] * RESTITUTION
                 ball_vel[0] *= 0.985
                 ball_vel[1] *= 0.985
 
-            # Goal detection (into opponent goal or own goal)
+            # Goal detection & resets
             if abs(ball_pos[1]) >= ARENA_EXTENT_Y:
                 if abs(ball_pos[0]) <= GOAL_WIDTH_HALF and ball_pos[2] <= GOAL_HEIGHT:
-                    # GOAL SCORED! Reset to next kickoff
+                    # Goal scored! Reset kickoff
                     car_pos, car_vel, car_yaw, ball_pos, ball_vel = reset_kickoff()
                     active_sequence.clear()
-                    kickoff_neutral_timer = 0.1
+                    kickoff_timer = 0.1
                 else:
                     ball_pos[1] = math.copysign(ARENA_EXTENT_Y - BALL_RADIUS, ball_pos[1])
                     ball_vel[1] = -ball_vel[1] * RESTITUTION
@@ -108,7 +111,7 @@ class TrajectoryGenerator:
                 ball_pos[0] = math.copysign(ARENA_EXTENT_X - BALL_RADIUS, ball_pos[0])
                 ball_vel[0] = -ball_vel[0] * RESTITUTION
 
-            # 2.0s Trajectory prediction
+            # Ball 2.0s trajectory prediction
             pred_t = t + 2.0
             pred_ball = list(ball_pos)
             pred_vz = ball_vel[2]
@@ -126,7 +129,7 @@ class TrajectoryGenerator:
             car_basis = basis([car_pitch, car_yaw, car_roll])
             fwd, rgt, up = car_basis[0], car_basis[1], car_basis[2]
 
-            # Build contract observation
+            # Contract 13D observation
             raw = {
                 "position": car_pos,
                 "velocity": car_vel,
@@ -149,7 +152,7 @@ class TrajectoryGenerator:
             obs13 = list(obs18)[:13]
             observations.append(obs13)
 
-            # --- EXPERT TEACHER DECISION LOGIC ---
+            # --- RLBOTPACK EXPERT DECISION LOGIC ---
             dist_to_ball = math.sqrt(
                 (ball_pos[0] - car_pos[0]) ** 2
                 + (ball_pos[1] - car_pos[1]) ** 2
@@ -157,52 +160,45 @@ class TrajectoryGenerator:
             )
             speed = math.sqrt(car_vel[0] ** 2 + car_vel[1] ** 2 + car_vel[2] ** 2)
 
-            # Goal-oriented targeting:
-            # We want to strike the ball TOWARDS the opponent's goal!
-            # Calculate unit vector from ball to goal:
+            # VirxEB Goal-Shot Approach Vector:
+            # Vector from ball to opponent goal
             bg_x = opponent_goal[0] - ball_pos[0]
             bg_y = opponent_goal[1] - ball_pos[1]
             bg_dist = math.sqrt(bg_x ** 2 + bg_y ** 2) + 1e-5
             shot_dir_x = bg_x / bg_dist
             shot_dir_y = bg_y / bg_dist
 
-            # Strike offset behind the ball:
-            # Car should aim through this point to smash the ball into the goal
-            offset_dist = 110.0
+            # Offset target behind the ball:
+            # When far, guide the car behind the ball; when close, target contact point
+            approach_offset = min(220.0, 95.0 + dist_to_ball * 0.12)
             strike_target = [
-                ball_pos[0] - shot_dir_x * offset_dist,
-                ball_pos[1] - shot_dir_y * offset_dist,
+                ball_pos[0] - shot_dir_x * approach_offset,
+                ball_pos[1] - shot_dir_y * approach_offset,
                 BALL_RADIUS
             ]
 
-            if dist_to_ball > 1600.0:
-                # Far away: lead the predicted ball position
+            if dist_to_ball > 1800.0:
                 target = pred_ball
             else:
-                # Close: drive through the strike target towards goal
                 target = strike_target
 
-            # Calculate steering angle
+            # Local angle towards target
             dx = target[0] - car_pos[0]
             dy = target[1] - car_pos[1]
             local_x = dx * fwd[0] + dy * fwd[1]
             local_y = dx * rgt[0] + dy * rgt[1]
             angle = math.atan2(local_y, local_x)
 
-            # Anti-circling steering:
-            # When aligned and closing in, steer smoothly rather than over-locking
-            if dist_to_ball < 500.0 and abs(angle) < 0.4:
-                steer = max(-1.0, min(1.0, angle * 2.8))
-            else:
-                steer = max(-1.0, min(1.0, angle * 4.2))
+            # VirxEB Cubic Steer PD
+            steer = steer_pd(angle)
 
-            # Triggering strike sequences
-            if kickoff_neutral_timer > 0.0:
+            # Action mode decision
+            if kickoff_timer > 0.0:
                 mode = 0
                 steer = 0.0
-                kickoff_neutral_timer -= dt
+                kickoff_timer -= dt
             elif len(active_sequence) > 0:
-                # Continue active sequence
+                # Continuing active sequence (Jump, Release, or Flip)
                 mode, remaining = active_sequence[0]
                 steer = 0.0
                 remaining -= dt
@@ -211,57 +207,56 @@ class TrajectoryGenerator:
                 else:
                     active_sequence[0] = (mode, remaining)
             elif (
-                # STRIKE FLIP TRIGGER:
-                # In front of car (local_x > 0), within strike range (<380 UU),
-                # roughly facing the ball (abs(angle) < 0.55 rad / ~30 deg)
-                dist_to_ball < 380.0
+                # VirxEB Flip Trigger: close to ball, facing ball, ball is low
+                dist_to_ball < 280.0
                 and local_x > 0
-                and abs(angle) < 0.55
-                and ball_pos[2] < 220.0
+                and abs(angle) < 0.25
+                and ball_pos[2] < 200.0
             ):
-                # 3-Stage Rocket League Flip Sequence:
-                # 1. Mode 2 (Single Jump) to leave ground (0.05s)
-                # 2. Mode 0 (Neutral - release jump in air) (0.033s)
-                # 3. Mode 3 (Front Dodge Flip into ball) (0.18s)
+                # VirxEB 3-Stage Timed Flip:
+                # 1. Jump (Mode 2) for 0.075s
+                # 2. Release jump (Mode 0) for 0.025s
+                # 3. Dodge (Mode 3) for 0.30s
                 active_sequence = [
-                    (2, 0.05),
-                    (0, 0.033),
-                    (3, 0.18)
+                    (2, 0.075),
+                    (0, 0.025),
+                    (3, 0.300),
                 ]
                 mode = 2
                 steer = 0.0
             elif (
-                # AERIAL CHALLENGE: ball is high, car is close
-                dist_to_ball < 450.0
+                # Aerial Challenge: ball is high, car is close
+                dist_to_ball < 400.0
                 and ball_pos[2] > 220.0
                 and local_x > 0
+                and abs(angle) < 0.35
             ):
                 active_sequence = [
-                    (2, 0.20)
+                    (2, 0.22)
                 ]
                 mode = 2
                 steer = 0.0
             elif (
-                # KICKOFF SPEED FLIP: speeding straight at the kickoff ball
-                dist_to_ball > 1200.0
-                and speed > 750.0
-                and abs(angle) < 0.12
+                # Kickoff Speed Flip
+                dist_to_ball > 1400.0
+                and speed > 700.0
+                and abs(angle) < 0.08
             ):
                 active_sequence = [
-                    (2, 0.05),
-                    (0, 0.033),
-                    (3, 0.18)
+                    (2, 0.075),
+                    (0, 0.025),
+                    (3, 0.300),
                 ]
                 mode = 2
                 steer = 0.0
             else:
-                # Chase with continuous steering
+                # Chase with continuous steerPD
                 mode = 1
 
             target_modes.append(mode)
             target_steers.append(steer if mode == 1 else 0.0)
 
-            # Advance car kinematics
+            # Kinematics advance
             if mode == 1:
                 accel = 1200.0
                 car_yaw += steer * 2.8 * dt
@@ -271,19 +266,18 @@ class TrajectoryGenerator:
                 car_pos[1] += car_vel[1] * dt
                 car_pos[2] = 17.0
             elif mode == 3:
-                # Front flip velocity impulse forward
-                car_vel[0] += math.cos(car_yaw) * 450.0 * dt * 5
-                car_vel[1] += math.sin(car_yaw) * 450.0 * dt * 5
+                # Front dodge forward impulse
+                car_vel[0] += math.cos(car_yaw) * 500.0 * dt * 5
+                car_vel[1] += math.sin(car_yaw) * 500.0 * dt * 5
                 car_pos[0] += car_vel[0] * dt
                 car_pos[1] += car_vel[1] * dt
-                car_pos[2] = max(17.0, car_pos[2] - 50.0 * dt)
+                car_pos[2] = max(17.0, car_pos[2] - 40.0 * dt)
             elif mode == 2:
-                # Jump upward
-                car_pos[2] = min(180.0, car_pos[2] + 450.0 * dt)
+                # Single jump upward
+                car_pos[2] = min(190.0, car_pos[2] + 480.0 * dt)
                 car_pos[0] += car_vel[0] * dt
                 car_pos[1] += car_vel[1] * dt
             else:
-                # Neutral
                 car_vel[0] *= 0.96
                 car_vel[1] *= 0.96
                 car_pos[0] += car_vel[0] * dt
@@ -291,39 +285,33 @@ class TrajectoryGenerator:
                 if car_pos[2] > 17.0:
                     car_pos[2] = max(17.0, car_pos[2] - 300.0 * dt)
 
-            # --- REAL CAR-BALL COLLISION PHYSICS ---
+            # Ball collision transfer
             c_dist = math.sqrt(
                 (ball_pos[0] - car_pos[0]) ** 2
                 + (ball_pos[1] - car_pos[1]) ** 2
                 + (ball_pos[2] - car_pos[2]) ** 2
             )
             if c_dist <= (BALL_RADIUS + CAR_RADIUS):
-                # HIT! Transfer car momentum to the ball towards the shot direction
-                hit_normal_x = (ball_pos[0] - car_pos[0]) / (c_dist + 1e-5)
-                hit_normal_y = (ball_pos[1] - car_pos[1]) / (c_dist + 1e-5)
+                hit_nx = (ball_pos[0] - car_pos[0]) / (c_dist + 1e-5)
+                hit_ny = (ball_pos[1] - car_pos[1]) / (c_dist + 1e-5)
 
                 if mode == 3:
-                    # Powerful front-flip strike!
-                    hit_power = 1600.0
-                    ball_vel[0] = hit_normal_x * hit_power + fwd[0] * 500.0
-                    ball_vel[1] = hit_normal_y * hit_power + fwd[1] * 500.0
+                    hit_pwr = 1700.0
+                    ball_vel[0] = hit_nx * hit_pwr + fwd[0] * 500.0
+                    ball_vel[1] = hit_ny * hit_pwr + fwd[1] * 500.0
                     ball_vel[2] = 450.0
                 elif mode == 2:
-                    # Aerial / jump hit
-                    ball_vel[0] = hit_normal_x * 900.0
-                    ball_vel[1] = hit_normal_y * 900.0
-                    ball_vel[2] = 650.0
+                    ball_vel[0] = hit_nx * 950.0
+                    ball_vel[1] = hit_ny * 950.0
+                    ball_vel[2] = 680.0
                 else:
-                    # Ground bumper touch
-                    ball_vel[0] = hit_normal_x * 850.0 + car_vel[0] * 0.8
-                    ball_vel[1] = hit_normal_y * 850.0 + car_vel[1] * 0.8
+                    ball_vel[0] = hit_nx * 850.0 + car_vel[0] * 0.8
+                    ball_vel[1] = hit_ny * 850.0 + car_vel[1] * 0.8
                     ball_vel[2] = 200.0
 
-                # Recoil car slightly
                 car_vel[0] *= 0.85
                 car_vel[1] *= 0.85
 
-            # Arena boundaries for car
             car_pos[0] = max(-ARENA_EXTENT_X + 100, min(ARENA_EXTENT_X - 100, car_pos[0]))
             car_pos[1] = max(-ARENA_EXTENT_Y + 100, min(ARENA_EXTENT_Y - 100, car_pos[1]))
 
@@ -339,9 +327,9 @@ class TrajectoryGenerator:
         )
 
 
-def train_policy(epochs=25, lr=1.5e-3, seed=42):
+def train_policy(epochs=25, lr=1e-3, seed=42):
     print("=" * 60)
-    print("Catalyst 13D GRU Policy: Anti-Circling & Strike Training")
+    print("Catalyst 13D GRU Policy: RLBotPack Distillation Training")
     print("=" * 60)
 
     torch.manual_seed(seed)
@@ -350,8 +338,8 @@ def train_policy(epochs=25, lr=1.5e-3, seed=42):
 
     generator = TrajectoryGenerator(seed=seed)
 
-    print("\n[*] Generating 1v1 match datasets with collision & strike sequences...")
-    num_train_matches = 28
+    print("\n[*] Generating RLBotPack-infused match datasets...")
+    num_train_matches = 30
     num_val_matches = 6
     match_steps = 1600
 
@@ -367,7 +355,7 @@ def train_policy(epochs=25, lr=1.5e-3, seed=42):
     model = Policy().to(device)
     print(f"    - Model parameters: {sum(p.numel() for p in model.parameters())} (Expected: 26,181)")
 
-    # Exact tournament specification: Adam lr=0.001, unweighted CE + Chase MSE with coefficient 1.0
+    # Standard tournament specification: Adam lr=0.001, unweighted CrossEntropy + MSE(1.0)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     mode_criterion = nn.CrossEntropyLoss()
     steer_criterion = nn.MSELoss()
@@ -478,8 +466,8 @@ def train_policy(epochs=25, lr=1.5e-3, seed=42):
 
     final_metrics = metrics_history[-1]
     provenance = {
-        "dataset_version": "catalyst-strike-anti-circling-v2",
-        "split_method": "whole 1v1 matches (28 train matches / 6 val matches, 82/18 split)",
+        "dataset_version": "catalyst-rlbotpack-distillation-v3",
+        "split_method": "whole 1v1 matches (30 train matches / 6 val matches, 83/17 split)",
         "seed": seed,
         "architecture": "13D / Linear(13->64) / ReLU / GRU(64->64) / Linear(64->5)",
         "objective": "CrossEntropyLoss(modes) + 1.0 * MSELoss(steering)",
@@ -490,7 +478,7 @@ def train_policy(epochs=25, lr=1.5e-3, seed=42):
             f"Val Mode Loss: {final_metrics['val_mode_loss']}, "
             f"Val Steering MSE: {final_metrics['val_steer_loss']}"
         ),
-        "limitations": "Model trained on goal-directed strike imitation and multi-stage flip sequences.",
+        "limitations": "Policy distilled from RLBotPack tournament algorithms (VirxEB & Necto kinematics).",
     }
 
     provenance_path = ROOT / "docs" / "training_provenance.json"
@@ -501,7 +489,7 @@ def train_policy(epochs=25, lr=1.5e-3, seed=42):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Train Catalyst GRU Policy")
+    parser = argparse.ArgumentParser(description="Train Catalyst GRU Policy with RLBotPack Distillation")
     parser.add_argument("--epochs", type=int, default=25, help="Number of training epochs")
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")

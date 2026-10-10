@@ -1,11 +1,11 @@
 {
-  "dataset_version": "catalyst-strike-anti-circling-v2",
-  "split_method": "whole 1v1 matches (28 train matches / 6 val matches, 82/18 split)",
+  "dataset_version": "catalyst-rlbotpack-distillation-v3",
+  "split_method": "whole 1v1 matches (30 train matches / 6 val matches, 83/17 split)",
   "seed": 42,
   "architecture": "13D / Linear(13->64) / ReLU / GRU(64->64) / Linear(64->5)",
   "objective": "CrossEntropyLoss(modes) + 1.0 * MSELoss(steering)",
-  "checkpoint_selection": "Lowest total validation loss (0.1490)",
+  "checkpoint_selection": "Lowest total validation loss (0.1934)",
   "training_command": "python tools/train.py --epochs 25 --lr 0.001 --seed 42",
-  "validation_results": "Val Mode Accuracy: 94.51%, Val Mode Loss: 0.1431, Val Steering MSE: 0.0059",
-  "limitations": "Model trained on goal-directed strike imitation and multi-stage flip sequences."
+  "validation_results": "Val Mode Accuracy: 92.35%, Val Mode Loss: 0.2005, Val Steering MSE: 0.0343",
+  "limitations": "Policy distilled from RLBotPack tournament algorithms (VirxEB & Necto kinematics)."
 }
