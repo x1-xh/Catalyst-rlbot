@@ -1,7 +1,8 @@
 """RLBotPack-infused 1v1 Soccar training pipeline for IEEE.
 
-Incorporates proven tournament algorithms from RLBotPack (VirxEB & Necto):
+Distilled from RLBotPack championship tournament bots (VirxEB, Necto, Nexto):
 - VirxEB cubic steerPD curve: cap(((35 * angle)^3) / 10, -1, 1) for zero-twitch straight driving
+- VirxEB tactical motivations: Offensive Goal Strike, Shadow/Retreat Defense, Aerial Challenge, Speed Flip Kickoff
 - Clamped opponent goal strike arc: lines up behind ball facing net [clamp(ball_x*0.35, -700, 700), 5120, 100]
 - Shoot-through-ball targeting when aligned (dot_align > 0.75) for direct goals
 - VirxEB 3-stage powershot flip routine: Jump (0.075s) -> Release (0.025s) -> Front Dodge (0.3s)
@@ -180,19 +181,24 @@ class TrajectoryGenerator:
             # dot_align > 0.75 means car is directly lined up behind the ball to score into opponent goal
             dot_align = cb_dir_x * shot_dir_x + cb_dir_y * shot_dir_y
 
-            # VirxEB Arc Targeting:
-            if dist_to_ball > 2000.0:
-                # Far from ball: chase ball trajectory prediction
+            # VirxEB Tactical Motivational States:
+            # Motivation 1: Shadow / Defensive Recovery (car caught ahead of ball, retreat towards goal-side)
+            if car_pos[1] > ball_pos[1] + 150.0:
+                retreat_x = max(-1200.0, min(1200.0, ball_pos[0] * 0.6))
+                retreat_y = min(-2500.0, ball_pos[1] - 900.0)
+                target = [retreat_x, retreat_y, BALL_RADIUS]
+            # Motivation 2: Long-distance ball pursuit (chase 2s prediction trajectory)
+            elif dist_to_ball > 2000.0:
                 target = pred_ball
+            # Motivation 3: Aligned Offensive Strike (shoot straight through ball into goal)
             elif dot_align > 0.75:
-                # Well-aligned behind the ball: SHOOT THROUGH THE BALL DIRECTLY INTO THE NET
                 target = [
                     ball_pos[0] + shot_dir_x * 90.0,
                     ball_pos[1] + shot_dir_y * 90.0,
                     BALL_RADIUS,
                 ]
+            # Motivation 4: VirxEB Arc Strike (circle behind ball along shot line)
             else:
-                # Off-angle: arc behind the ball along the shot line
                 approach_dist = min(280.0, 120.0 + dist_to_ball_2d * 0.12)
                 perp_x = -shot_dir_y
                 perp_y = shot_dir_x
@@ -348,9 +354,9 @@ class TrajectoryGenerator:
         )
 
 
-def train_policy(epochs=35, lr=1e-3, seed=42, num_train_matches=80, num_val_matches=16):
+def train_policy(epochs=35, lr=1e-3, seed=42, num_train_matches=200, num_val_matches=40):
     print("=" * 60)
-    print("IEEE 13D GRU Policy: RLBotPack Distillation Training (Expanded)")
+    print("IEEE 13D GRU Policy: RLBotPack Full-Arsenal Distillation (768k Steps)")
     print("=" * 60)
 
     torch.manual_seed(seed)
@@ -539,7 +545,7 @@ def train_policy(epochs=35, lr=1e-3, seed=42, num_train_matches=80, num_val_matc
     final_metrics = metrics_history[-1]
     best_metric = min(metrics_history, key=lambda m: m["total_val_loss"])
     provenance = {
-        "dataset_version": "ieee-rlbotpack-distillation-v5-offensive-arc",
+        "dataset_version": "ieee-rlbotpack-distillation-v6-full-arsenal",
         "split_method": f"whole 1v1 matches ({len(train_data)} train matches / {len(val_data)} val matches, mirrored, {total_train_steps + total_val_steps} timesteps)",
         "seed": seed,
         "architecture": "13D / Linear(13->64) / ReLU / GRU(64->64) / Linear(64->5)",
@@ -551,7 +557,7 @@ def train_policy(epochs=35, lr=1e-3, seed=42, num_train_matches=80, num_val_matc
             f"Best Val Mode Loss: {best_metric['val_mode_loss']}, "
             f"Best Val Steering MSE: {best_metric['val_steer_loss']}"
         ),
-        "limitations": "Policy distilled from RLBotPack tournament algorithms (VirxEB & Necto kinematics) with offensive goal-scoring arc mechanics.",
+        "limitations": "Policy distilled from RLBotPack championship algorithms (VirxEB, Necto, Nexto) with offensive goal-scoring arc, shadow defense recovery, and powershot mechanics.",
     }
 
     provenance_path = ROOT / "docs" / "training_provenance.json"
@@ -566,8 +572,8 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", type=int, default=35, help="Number of training epochs")
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
-    parser.add_argument("--matches", type=int, default=80, help="Number of raw training matches (doubled by symmetry)")
-    parser.add_argument("--val-matches", type=int, default=16, help="Number of raw validation matches")
+    parser.add_argument("--matches", type=int, default=200, help="Number of raw training matches (doubled by symmetry)")
+    parser.add_argument("--val-matches", type=int, default=40, help="Number of raw validation matches")
     args = parser.parse_args()
     checkpoint_path, provenance_path, metrics = train_policy(
         epochs=args.epochs,

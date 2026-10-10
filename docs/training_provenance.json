@@ -1,11 +1,11 @@
 {
-  "dataset_version": "ieee-rlbotpack-distillation-v5-offensive-arc",
-  "split_method": "whole 1v1 matches (160 train matches / 32 val matches, mirrored, 307200 timesteps)",
+  "dataset_version": "ieee-rlbotpack-distillation-v6-full-arsenal",
+  "split_method": "whole 1v1 matches (400 train matches / 80 val matches, mirrored, 768000 timesteps)",
   "seed": 42,
   "architecture": "13D / Linear(13->64) / ReLU / GRU(64->64) / Linear(64->5)",
   "objective": "CrossEntropyLoss(modes) + 1.2 * MSELoss(steering) with CosineAnnealingLR",
-  "checkpoint_selection": "Lowest total validation loss (0.0126)",
-  "training_command": "python tools/train.py --epochs 35 --lr 0.001 --seed 42 --matches 80 --val-matches 16",
-  "validation_results": "Best Val Mode Accuracy: 99.85%, Best Val Mode Loss: 0.0052, Best Val Steering MSE: 0.0061",
-  "limitations": "Policy distilled from RLBotPack tournament algorithms (VirxEB & Necto kinematics) with offensive goal-scoring arc mechanics."
+  "checkpoint_selection": "Lowest total validation loss (0.0104)",
+  "training_command": "python tools/train.py --epochs 35 --lr 0.001 --seed 42 --matches 200 --val-matches 40",
+  "validation_results": "Best Val Mode Accuracy: 99.92%, Best Val Mode Loss: 0.002, Best Val Steering MSE: 0.0071",
+  "limitations": "Policy distilled from RLBotPack championship algorithms (VirxEB, Necto, Nexto) with offensive goal-scoring arc, shadow defense recovery, and powershot mechanics."
 }
