@@ -9,7 +9,7 @@ logo_file = ""
 hivemind = false
 
 [details]
-description = "Experimental 1v1 imitation-learning bot using the original V13 13D GRU checkpoint."
-developer = "shryssssss"
+description = "Trained 1v1 imitation-learning GRU policy by Catalyst/IEEE."
+developer = "IEEE"
 language = "Python"
 tags = ["1v1"]
