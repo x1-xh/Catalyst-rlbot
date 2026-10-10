@@ -1,11 +1,11 @@
 {
-  "dataset_version": "catalyst-rlbotpack-distillation-v3",
-  "split_method": "whole 1v1 matches (30 train matches / 6 val matches, 83/17 split)",
+  "dataset_version": "catalyst-rlbotpack-distillation-v4-expanded",
+  "split_method": "whole 1v1 matches (120 train matches / 24 val matches, mirrored, 230400 timesteps)",
   "seed": 42,
   "architecture": "13D / Linear(13->64) / ReLU / GRU(64->64) / Linear(64->5)",
-  "objective": "CrossEntropyLoss(modes) + 1.0 * MSELoss(steering)",
-  "checkpoint_selection": "Lowest total validation loss (0.0921)",
-  "training_command": "python tools/train.py --epochs 25 --lr 0.001 --seed 42",
-  "validation_results": "Val Mode Accuracy: 97.1%, Val Mode Loss: 0.0758, Val Steering MSE: 0.0262",
+  "objective": "CrossEntropyLoss(modes) + 1.2 * MSELoss(steering) with CosineAnnealingLR",
+  "checkpoint_selection": "Lowest total validation loss (0.0220)",
+  "training_command": "python tools/train.py --epochs 35 --lr 0.001 --seed 42 --matches 60",
+  "validation_results": "Best Val Mode Accuracy: 99.66%, Best Val Mode Loss: 0.0106, Best Val Steering MSE: 0.0095",
   "limitations": "Policy distilled from RLBotPack tournament algorithms (VirxEB & Necto kinematics)."
 }

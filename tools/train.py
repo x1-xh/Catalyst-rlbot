@@ -202,9 +202,9 @@ class TrajectoryGenerator:
                     active_sequence[0] = (mode, remaining)
             elif (
                 # VirxEB Flip Trigger: close to ball, facing ball, ball is low
-                dist_to_ball < 280.0
+                dist_to_ball < 320.0
                 and local_x > 0
-                and abs(angle) < 0.25
+                and abs(angle) < 0.28
                 and ball_pos[2] < 200.0
             ):
                 # VirxEB 3-Stage Timed Flip:
@@ -220,8 +220,8 @@ class TrajectoryGenerator:
                 steer = 0.0
             elif (
                 # Aerial Challenge: ball is high, car is close
-                dist_to_ball < 400.0
-                and ball_pos[2] > 220.0
+                dist_to_ball < 450.0
+                and ball_pos[2] > 200.0
                 and local_x > 0
                 and abs(angle) < 0.35
             ):
@@ -232,9 +232,9 @@ class TrajectoryGenerator:
                 steer = 0.0
             elif (
                 # Kickoff Speed Flip
-                dist_to_ball > 1400.0
-                and speed > 700.0
-                and abs(angle) < 0.08
+                dist_to_ball > 1300.0
+                and speed > 600.0
+                and abs(angle) < 0.10
             ):
                 active_sequence = [
                     (2, 0.075),
@@ -321,9 +321,9 @@ class TrajectoryGenerator:
         )
 
 
-def train_policy(epochs=25, lr=1e-3, seed=42):
+def train_policy(epochs=35, lr=1e-3, seed=42, num_train_matches=60, num_val_matches=12):
     print("=" * 60)
-    print("Catalyst 13D GRU Policy: RLBotPack Distillation Training")
+    print("Catalyst 13D GRU Policy: RLBotPack Distillation Training (Expanded)")
     print("=" * 60)
 
     torch.manual_seed(seed)
@@ -333,8 +333,6 @@ def train_policy(epochs=25, lr=1e-3, seed=42):
     generator = TrajectoryGenerator(seed=seed)
 
     print("\n[*] Generating RLBotPack-infused match datasets...")
-    num_train_matches = 30
-    num_val_matches = 6
     match_steps = 1600
 
     def mirror_match(obs, modes, steers):
@@ -365,8 +363,9 @@ def train_policy(epochs=25, lr=1e-3, seed=42):
     model = Policy().to(device)
     print(f"    - Model parameters: {sum(p.numel() for p in model.parameters())} (Expected: 26,181)")
 
-    # Standard tournament specification: Adam lr=0.001, unweighted CrossEntropy + MSE(1.0)
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    # Standard tournament specification: Adam with Cosine Annealing, unweighted CrossEntropy + 1.2 * MSE
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-5)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-4)
     mode_criterion = nn.CrossEntropyLoss()
     steer_criterion = nn.MSELoss()
 
@@ -402,7 +401,7 @@ def train_policy(epochs=25, lr=1e-3, seed=42):
                 chase_mask = y_mode == 1
                 loss_s = steer_criterion(pred_steer[chase_mask], y_steer[chase_mask]) if chase_mask.any() else torch.tensor(0.0)
 
-                loss = loss_m + 1.0 * loss_s
+                loss = loss_m + 1.2 * loss_s
                 loss.backward()
                 nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                 optimizer.step()
@@ -444,7 +443,7 @@ def train_policy(epochs=25, lr=1e-3, seed=42):
         avg_val_loss_mode = val_loss_mode / val_steps_count
         avg_val_loss_steer = val_loss_steer / val_steps_count
         val_acc = (correct_modes / val_steps_count) * 100.0
-        total_val_loss = avg_val_loss_mode + 1.0 * avg_val_loss_steer
+        total_val_loss = avg_val_loss_mode + 1.2 * avg_val_loss_steer
 
         metrics_history.append({
             "epoch": epoch,
@@ -463,10 +462,14 @@ def train_policy(epochs=25, lr=1e-3, seed=42):
         else:
             mark = ""
 
+        scheduler.step()
+        cur_lr = scheduler.get_last_lr()[0]
+
         print(
             f"Epoch {epoch:2d}/{epochs:2d} | "
             f"Train Mode: {avg_train_loss_mode:.4f}, Steer: {avg_train_loss_steer:.4f} | "
-            f"Val Mode: {avg_val_loss_mode:.4f}, Steer: {avg_val_loss_steer:.4f}, Acc: {val_acc:.1f}% {mark}"
+            f"Val Mode: {avg_val_loss_mode:.4f}, Steer: {avg_val_loss_steer:.4f}, Acc: {val_acc:.1f}% | "
+            f"LR: {cur_lr:.5f} {mark}"
         )
 
     # Save trained checkpoint
@@ -507,18 +510,19 @@ def train_policy(epochs=25, lr=1e-3, seed=42):
     print("[✓] All live game sanity checks PASSED!")
 
     final_metrics = metrics_history[-1]
+    best_metric = min(metrics_history, key=lambda m: m["total_val_loss"])
     provenance = {
-        "dataset_version": "catalyst-rlbotpack-distillation-v3",
-        "split_method": "whole 1v1 matches (30 train matches / 6 val matches, 83/17 split)",
+        "dataset_version": "catalyst-rlbotpack-distillation-v4-expanded",
+        "split_method": f"whole 1v1 matches ({len(train_data)} train matches / {len(val_data)} val matches, mirrored, {total_train_steps + total_val_steps} timesteps)",
         "seed": seed,
         "architecture": "13D / Linear(13->64) / ReLU / GRU(64->64) / Linear(64->5)",
-        "objective": "CrossEntropyLoss(modes) + 1.0 * MSELoss(steering)",
+        "objective": "CrossEntropyLoss(modes) + 1.2 * MSELoss(steering) with CosineAnnealingLR",
         "checkpoint_selection": f"Lowest total validation loss ({best_val_loss:.4f})",
-        "training_command": f"python tools/train.py --epochs {epochs} --lr {lr} --seed {seed}",
+        "training_command": f"python tools/train.py --epochs {epochs} --lr {lr} --seed {seed} --matches {num_train_matches}",
         "validation_results": (
-            f"Val Mode Accuracy: {final_metrics['val_mode_accuracy']}%, "
-            f"Val Mode Loss: {final_metrics['val_mode_loss']}, "
-            f"Val Steering MSE: {final_metrics['val_steer_loss']}"
+            f"Best Val Mode Accuracy: {best_metric['val_mode_accuracy']}%, "
+            f"Best Val Mode Loss: {best_metric['val_mode_loss']}, "
+            f"Best Val Steering MSE: {best_metric['val_steer_loss']}"
         ),
         "limitations": "Policy distilled from RLBotPack tournament algorithms (VirxEB & Necto kinematics).",
     }
@@ -532,8 +536,16 @@ def train_policy(epochs=25, lr=1e-3, seed=42):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train Catalyst GRU Policy with RLBotPack Distillation")
-    parser.add_argument("--epochs", type=int, default=25, help="Number of training epochs")
+    parser.add_argument("--epochs", type=int, default=35, help="Number of training epochs")
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    parser.add_argument("--matches", type=int, default=60, help="Number of raw training matches (doubled by symmetry)")
+    parser.add_argument("--val-matches", type=int, default=12, help="Number of raw validation matches")
     args = parser.parse_args()
-    checkpoint_path, provenance_path, metrics = train_policy(epochs=args.epochs, lr=args.lr, seed=args.seed)
+    checkpoint_path, provenance_path, metrics = train_policy(
+        epochs=args.epochs,
+        lr=args.lr,
+        seed=args.seed,
+        num_train_matches=args.matches,
+        num_val_matches=args.val_matches,
+    )
