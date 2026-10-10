@@ -7,14 +7,14 @@
   "training_provenance": {
     "dataset_version": "catalyst-strike-anti-circling-v2",
     "split_method": "whole 1v1 matches (28 train matches / 6 val matches, 82/18 split)",
-    "seed": 2026,
+    "seed": 42,
     "architecture": "13D / Linear(13->64) / ReLU / GRU(64->64) / Linear(64->5)",
-    "objective": "WeightedCrossEntropyLoss(modes: [1,1,3.5,3.5]) + 0.5 * MSELoss(steering)",
-    "checkpoint_selection": "Lowest total validation loss (0.0445)",
-    "training_command": "python tools/train.py --epochs 25 --lr 0.0015 --seed 2026",
-    "validation_results": "Val Mode Accuracy: 96.94%, Val Mode Loss: 0.085, Val Steering MSE: 0.0095",
+    "objective": "CrossEntropyLoss(modes) + 1.0 * MSELoss(steering)",
+    "checkpoint_selection": "Lowest total validation loss (0.1490)",
+    "training_command": "python tools/train.py --epochs 25 --lr 0.001 --seed 42",
+    "validation_results": "Val Mode Accuracy: 94.51%, Val Mode Loss: 0.1431, Val Steering MSE: 0.0059",
     "limitations": "Model trained on goal-directed strike imitation and multi-stage flip sequences."
   },
   "live_acceptance": "NOT TESTED after edits; run preflight and GUI match",
-  "checkpoint_sha256": "d46eee89a797222d904b9a167d3767f2808b6aa85a4d324d76aac3cc58e7e836"
+  "checkpoint_sha256": "90529e565bf199c499da2282a45b3662a8f5c53a2a452ebec73b3eea224c98df"
 }

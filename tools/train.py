@@ -367,18 +367,17 @@ def train_policy(epochs=25, lr=1.5e-3, seed=42):
     model = Policy().to(device)
     print(f"    - Model parameters: {sum(p.numel() for p in model.parameters())} (Expected: 26,181)")
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
-    # Mode class weights to ensure Jump (2) and Flip (3) are strongly learned
-    weights = torch.tensor([1.0, 1.0, 3.5, 3.5], device=device)
-    mode_criterion = nn.CrossEntropyLoss(weight=weights)
+    # Exact tournament specification: Adam lr=0.001, unweighted CE + Chase MSE with coefficient 1.0
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    mode_criterion = nn.CrossEntropyLoss()
     steer_criterion = nn.MSELoss()
 
     best_val_loss = float("inf")
     best_state_dict = None
     metrics_history = []
-    seq_len = 64
+    seq_len = 256
 
-    print(f"\n[*] Starting training loop (epochs={epochs}):")
+    print(f"\n[*] Starting training loop (epochs={epochs}, chunk_callbacks={seq_len}):")
     for epoch in range(1, epochs + 1):
         model.train()
         train_loss_mode = 0.0
@@ -405,7 +404,7 @@ def train_policy(epochs=25, lr=1.5e-3, seed=42):
                 chase_mask = y_mode == 1
                 loss_s = steer_criterion(pred_steer[chase_mask], y_steer[chase_mask]) if chase_mask.any() else torch.tensor(0.0)
 
-                loss = loss_m + 0.5 * loss_s
+                loss = loss_m + 1.0 * loss_s
                 loss.backward()
                 nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                 optimizer.step()
@@ -447,7 +446,7 @@ def train_policy(epochs=25, lr=1.5e-3, seed=42):
         avg_val_loss_mode = val_loss_mode / val_steps_count
         avg_val_loss_steer = val_loss_steer / val_steps_count
         val_acc = (correct_modes / val_steps_count) * 100.0
-        total_val_loss = avg_val_loss_mode + 0.5 * avg_val_loss_steer
+        total_val_loss = avg_val_loss_mode + 1.0 * avg_val_loss_steer
 
         metrics_history.append({
             "epoch": epoch,
@@ -483,7 +482,7 @@ def train_policy(epochs=25, lr=1.5e-3, seed=42):
         "split_method": "whole 1v1 matches (28 train matches / 6 val matches, 82/18 split)",
         "seed": seed,
         "architecture": "13D / Linear(13->64) / ReLU / GRU(64->64) / Linear(64->5)",
-        "objective": "WeightedCrossEntropyLoss(modes: [1,1,3.5,3.5]) + 0.5 * MSELoss(steering)",
+        "objective": "CrossEntropyLoss(modes) + 1.0 * MSELoss(steering)",
         "checkpoint_selection": f"Lowest total validation loss ({best_val_loss:.4f})",
         "training_command": f"python tools/train.py --epochs {epochs} --lr {lr} --seed {seed}",
         "validation_results": (
@@ -504,7 +503,7 @@ def train_policy(epochs=25, lr=1.5e-3, seed=42):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train Catalyst GRU Policy")
     parser.add_argument("--epochs", type=int, default=25, help="Number of training epochs")
-    parser.add_argument("--lr", type=float, default=1.5e-3, help="Learning rate")
-    parser.add_argument("--seed", type=int, default=2026, help="Random seed")
+    parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed")
     args = parser.parse_args()
     checkpoint_path, provenance_path, metrics = train_policy(epochs=args.epochs, lr=args.lr, seed=args.seed)
