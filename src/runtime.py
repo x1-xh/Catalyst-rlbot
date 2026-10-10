@@ -56,6 +56,8 @@ class Runtime:
 
     def observe(self,packet,index,prediction):
         T=float(packet.match_info.seconds_elapsed)
+        if self.previous_elapsed is not None and T < self.previous_elapsed:
+            self.previous_elapsed=None;self.previous_controls=None;self.hidden=None
         selected=None
         selected_index=None
         if prediction.slices:

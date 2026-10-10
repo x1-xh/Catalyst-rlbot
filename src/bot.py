@@ -70,6 +70,13 @@ class V13(Bot):
     def get_output(self,packet):
         self.callbacks+=1
         T=float(packet.match_info.seconds_elapsed)
+        if self.runtime is not None and self.runtime.previous_elapsed is not None:
+            if T < self.runtime.previous_elapsed:
+                self.runtime.previous_elapsed = None
+                self.runtime.previous_controls = None
+                self.runtime.hidden = None
+            elif T == self.runtime.previous_elapsed and self.expected is not None:
+                return flat.ControllerState(*self.expected)
         try:
             if not self.predictions:raise RuntimeError('No actual delivered BallPrediction yet')
             obs,index,selected=self.runtime.observe(packet,self.index,self.ball_prediction)
