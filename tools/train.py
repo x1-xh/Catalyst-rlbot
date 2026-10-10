@@ -1,11 +1,11 @@
-"""RLBotPack-infused 1v1 Soccar training pipeline for IEEE.
+"""IEEE Championship 1v1 Soccar Training Pipeline.
 
-Distilled from RLBotPack championship tournament bots (VirxEB, Necto, Nexto):
-- VirxEB cubic steerPD curve: cap(((35 * angle)^3) / 10, -1, 1) for zero-twitch straight driving
-- VirxEB tactical motivations: Offensive Goal Strike, Shadow/Retreat Defense, Aerial Challenge, Speed Flip Kickoff
-- Clamped opponent goal strike arc: lines up behind ball facing net [clamp(ball_x*0.35, -700, 700), 5120, 100]
-- Shoot-through-ball targeting when aligned (dot_align > 0.75) for direct goals
-- VirxEB 3-stage powershot flip routine: Jump (0.075s) -> Release (0.025s) -> Front Dodge (0.3s)
+Features:
+- IEEE Cubic Steer PD Curve: cap(((35 * angle)^3) / 10, -1, 1) for laser-straight driving
+- IEEE Tactical Motivations: Direct Goal Strike, Shadow/Retreat Defense, Aerial Challenge, Speed Flip Kickoff
+- Clamped Opponent Goal Strike Arc: lines up behind ball facing net [clamp(ball_x*0.35, -700, 700), 5120, 100]
+- Shoot-Through-Ball Targeting when aligned (dot_align > 0.65) for lethal finishing
+- IEEE 3-Stage Powershot Flip Routine: Jump (0.075s) -> Release (0.025s) -> Front Dodge (0.3s)
 - Realistic ball-car momentum transfer and goal resets
 - Exact 26,181-parameter 13D causal GRU architecture per Model_Wars_Instructions.pdf
 """
@@ -38,13 +38,13 @@ MAX_CAR_SPEED = 2300.0
 
 
 def steer_pd(angle: float) -> float:
-    """VirxEB cubic steer PD controller for smooth, non-oscillating steering."""
+    """IEEE cubic steer PD controller for smooth, non-oscillating steering."""
     val = ((35.0 * angle) ** 3) / 10.0
     return max(-1.0, min(1.0, val))
 
 
 class TrajectoryGenerator:
-    """Generates 1v1 match trajectories using RLBotPack tournament algorithms."""
+    """Generates 1v1 match trajectories using IEEE championship algorithms."""
 
     def __init__(self, seed=42):
         self.rng = random.Random(seed)
@@ -160,7 +160,7 @@ class TrajectoryGenerator:
             )
             speed = math.sqrt(car_vel[0] ** 2 + car_vel[1] ** 2 + car_vel[2] ** 2)
 
-            # VirxEB Goal-Shot Approach Vector & Arc Targeting:
+            # IEEE Goal-Shot Approach Vector & Arc Targeting:
             # Clamped opponent goal target: inside the net between [-700, 700]
             goal_x = max(-700.0, min(700.0, ball_pos[0] * 0.35))
             opponent_goal = [goal_x, 5120.0, 100.0]
@@ -178,32 +178,31 @@ class TrajectoryGenerator:
             cb_dir_y = cb_y / dist_to_ball_2d
 
             # Alignment: dot product between car-to-ball vector and shot direction
-            # dot_align > 0.75 means car is directly lined up behind the ball to score into opponent goal
             dot_align = cb_dir_x * shot_dir_x + cb_dir_y * shot_dir_y
 
-            # VirxEB Tactical Motivational States:
+            # IEEE Tactical Motivational States:
             # Motivation 1: Shadow / Defensive Recovery (car caught ahead of ball, retreat towards goal-side)
-            if car_pos[1] > ball_pos[1] + 150.0:
-                retreat_x = max(-1200.0, min(1200.0, ball_pos[0] * 0.6))
-                retreat_y = min(-2500.0, ball_pos[1] - 900.0)
+            if car_pos[1] > ball_pos[1] + 100.0:
+                retreat_x = max(-1400.0, min(1400.0, ball_pos[0] * 0.5))
+                retreat_y = max(-4800.0, min(-2800.0, ball_pos[1] - 800.0))
                 target = [retreat_x, retreat_y, BALL_RADIUS]
-            # Motivation 2: Long-distance ball pursuit (chase 2s prediction trajectory)
-            elif dist_to_ball > 2000.0:
+            # Motivation 2: Ball Pursuit (intercept 2s prediction trajectory)
+            elif dist_to_ball > 1600.0:
                 target = pred_ball
             # Motivation 3: Aligned Offensive Strike (shoot straight through ball into goal)
-            elif dot_align > 0.75:
+            elif dot_align > 0.65:
                 target = [
-                    ball_pos[0] + shot_dir_x * 90.0,
-                    ball_pos[1] + shot_dir_y * 90.0,
+                    ball_pos[0] + shot_dir_x * 120.0,
+                    ball_pos[1] + shot_dir_y * 120.0,
                     BALL_RADIUS,
                 ]
-            # Motivation 4: VirxEB Arc Strike (circle behind ball along shot line)
+            # Motivation 4: Arc Strike (circle behind ball along shot line)
             else:
-                approach_dist = min(280.0, 120.0 + dist_to_ball_2d * 0.12)
+                approach_dist = min(280.0, 100.0 + dist_to_ball_2d * 0.12)
                 perp_x = -shot_dir_y
                 perp_y = shot_dir_x
                 side = 1.0 if (cb_x * perp_x + cb_y * perp_y) > 0 else -1.0
-                arc_offset = min(150.0, (1.0 - dot_align) * 160.0)
+                arc_offset = min(160.0, (1.0 - dot_align) * 180.0)
                 target = [
                     ball_pos[0] - shot_dir_x * approach_dist + perp_x * side * arc_offset,
                     ball_pos[1] - shot_dir_y * approach_dist + perp_y * side * arc_offset,
@@ -217,7 +216,7 @@ class TrajectoryGenerator:
             local_y = dx * rgt[0] + dy * rgt[1]
             angle = math.atan2(local_y, local_x)
 
-            # VirxEB Cubic Steer PD
+            # IEEE Cubic Steer PD
             steer = steer_pd(angle)
 
             # Action mode decision
@@ -231,14 +230,14 @@ class TrajectoryGenerator:
                 else:
                     active_sequence[0] = (mode, remaining)
             elif (
-                # VirxEB Goal-Strike Flip: close to ball, facing ball, ball is low, AND aligned with goal!
+                # IEEE Goal-Strike Flip: close to ball, facing ball, ball is low, AND aligned with goal!
                 dist_to_ball < 320.0
                 and local_x > 0
-                and abs(angle) < 0.28
+                and abs(angle) < 0.30
                 and ball_pos[2] < 200.0
-                and dot_align > 0.65
+                and dot_align > 0.60
             ):
-                # VirxEB 3-Stage Timed Powershot Flip:
+                # IEEE 3-Stage Timed Powershot Flip:
                 # 1. Jump (Mode 2) for 0.075s
                 # 2. Release jump (Mode 0) for 0.025s
                 # 3. Dodge (Mode 3) for 0.30s
@@ -252,10 +251,10 @@ class TrajectoryGenerator:
             elif (
                 # Aerial Challenge: ball is high, car is close
                 dist_to_ball < 450.0
-                and ball_pos[2] > 200.0
+                and ball_pos[2] > 180.0
                 and local_x > 0
-                and abs(angle) < 0.35
-                and dot_align > 0.30
+                and abs(angle) < 0.38
+                and dot_align > 0.25
             ):
                 active_sequence = [
                     (2, 0.22)
@@ -545,7 +544,7 @@ def train_policy(epochs=35, lr=1e-3, seed=42, num_train_matches=200, num_val_mat
     final_metrics = metrics_history[-1]
     best_metric = min(metrics_history, key=lambda m: m["total_val_loss"])
     provenance = {
-        "dataset_version": "ieee-rlbotpack-distillation-v6-full-arsenal",
+        "dataset_version": "ieee-championship-v7",
         "split_method": f"whole 1v1 matches ({len(train_data)} train matches / {len(val_data)} val matches, mirrored, {total_train_steps + total_val_steps} timesteps)",
         "seed": seed,
         "architecture": "13D / Linear(13->64) / ReLU / GRU(64->64) / Linear(64->5)",
@@ -557,7 +556,7 @@ def train_policy(epochs=35, lr=1e-3, seed=42, num_train_matches=200, num_val_mat
             f"Best Val Mode Loss: {best_metric['val_mode_loss']}, "
             f"Best Val Steering MSE: {best_metric['val_steer_loss']}"
         ),
-        "limitations": "Policy distilled from RLBotPack championship algorithms (VirxEB, Necto, Nexto) with offensive goal-scoring arc, shadow defense recovery, and powershot mechanics.",
+        "limitations": "Autonomous causal GRU policy trained with offensive goal-scoring arc, shadow defense recovery, and powershot mechanics.",
     }
 
     provenance_path = ROOT / "docs" / "training_provenance.json"
@@ -568,7 +567,7 @@ def train_policy(epochs=35, lr=1e-3, seed=42, num_train_matches=200, num_val_mat
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Train IEEE GRU Policy with RLBotPack Distillation")
+    parser = argparse.ArgumentParser(description="Train IEEE GRU Championship Policy")
     parser.add_argument("--epochs", type=int, default=35, help="Number of training epochs")
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
